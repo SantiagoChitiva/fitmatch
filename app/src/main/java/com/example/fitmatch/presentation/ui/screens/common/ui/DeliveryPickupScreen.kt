@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -81,7 +82,7 @@ fun DeliveryPickupScreen(
     LaunchedEffect(locationPermissions.allPermissionsGranted) {
         if (locationPermissions.allPermissionsGranted) {
             // Ubicación inicial del repartidor (inicio de la ruta)
-            val initialPosition = GeoPoint(4.60667, -74.08591) // Plaza España
+            val initialPosition = GeoPoint(4.60667, -74.08591) // Ubicación cerca al centro comercial
             currentLocation = initialPosition
 
             mapView?.let { map ->
@@ -362,56 +363,58 @@ fun DeliveryPickupScreen(
                     Spacer(Modifier.height(16.dp))
 
                     // Pasos del viaje (scrolleable)
-                    Column(
+                    LazyColumn(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.LocationOn,
-                                contentDescription = null,
-                                tint = colors.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                "Pasos del viaje",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = colors.onSurface
-                            )
+                        // Título
+                        item {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(bottom = 12.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.LocationOn,
+                                    contentDescription = null,
+                                    tint = colors.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "Pasos del viaje",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = colors.onSurface
+                                )
+                            }
+                            Spacer(Modifier.height(12.dp))
                         }
 
-                        Spacer(Modifier.height(12.dp))
-
                         // Cliente
-                        CustomerNoteCard(
-                            initials = uiState.order?.customerInitials ?: "—",
-                            nameWithAge = "${uiState.order?.customerName ?: "Cliente"} · ${uiState.order?.createdDaysAgo ?: 0}d",
-                            note = uiState.order?.customerNote ?: ""
-                        )
+                        item {
+                            CustomerNoteCard(
+                                initials = uiState.order?.customerInitials ?: "—",
+                                nameWithAge = "${uiState.order?.customerName ?: "Cliente"} · ${uiState.order?.createdDaysAgo ?: 0}d",
+                                note = uiState.order?.customerNote ?: ""
+                            )
+                            Spacer(Modifier.height(16.dp))
+                        }
 
-                        Spacer(Modifier.height(16.dp))
-
-                        // Pasos
-                        Column(
-                            Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            uiState.tripSteps.forEachIndexed { index, step ->
-                                StepContainer (
-                                    isCompleted = step.isCompleted,
-                                    isActive = step.isActive
-                                ){
-                                    TripStepRow(
-                                        step = step,
-                                        showConnector = index < uiState.tripSteps.lastIndex
-                                    )
-                                }
+                        // Pasos del viaje
+                        items(uiState.tripSteps.size) { index ->
+                            val step = uiState.tripSteps[index]
+                            StepContainer(
+                                isCompleted = step.isCompleted,
+                                isActive = step.isActive
+                            ) {
+                                TripStepRow(
+                                    step = step,
+                                    showConnector = index < uiState.tripSteps.lastIndex
+                                )
+                            }
+                            if (index < uiState.tripSteps.lastIndex) {
+                                Spacer(Modifier.height(12.dp))
                             }
                         }
                     }
@@ -478,6 +481,7 @@ fun DeliveryPickupScreen(
                 }
             }
         }
+
 
         // Diálogo de permisos
         if (!locationPermissions.allPermissionsGranted) {
