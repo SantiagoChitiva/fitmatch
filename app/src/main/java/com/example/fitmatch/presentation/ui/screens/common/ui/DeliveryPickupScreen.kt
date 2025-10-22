@@ -36,6 +36,8 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Schedule
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
 @Composable
@@ -78,39 +80,17 @@ fun DeliveryPickupScreen(
     // Inicializar ubicación cuando se otorguen permisos
     LaunchedEffect(locationPermissions.allPermissionsGranted) {
         if (locationPermissions.allPermissionsGranted) {
-            locationHandler.getCurrentLocation { geoPoint ->
-                currentLocation = geoPoint
-                mapView?.let { map ->
-                    if (currentLocationMarker == null) {
-                        currentLocationMarker = MapHelper.addMarker(
-                            map, geoPoint, "Mi ubicación", "Repartidor"
-                        )
-                    }
-                    MapHelper.centerMapOnLocation(map, geoPoint, 15.0)
+            // Ubicación inicial del repartidor (inicio de la ruta)
+            val initialPosition = GeoPoint(4.6097, -74.0817) // Centro Mayor
+            currentLocation = initialPosition
+
+            mapView?.let { map ->
+                if (currentLocationMarker == null) {
+                    currentLocationMarker = MapHelper.addMarker(
+                        map, initialPosition, "Repartidor", "" // ✅ Solo "Repartidor"
+                    )
                 }
-            }
-
-            locationHandler.startLocationUpdates { geoPoint ->
-                currentLocation = geoPoint
-
-                mapView?.let { map ->
-                    if (currentLocationMarker == null) {
-                        currentLocationMarker = MapHelper.addMarker(
-                            map, geoPoint, "Mi ubicación", "Repartidor"
-                        )
-                    } else {
-                        MapHelper.updateMarker(currentLocationMarker!!, geoPoint, map)
-                    }
-
-                    pathPoints.add(geoPoint)
-                    if (pathPolyline == null) {
-                        pathPolyline = MapHelper.addPolyline(map, pathPoints)
-                    } else {
-                        MapHelper.updatePolyline(pathPolyline!!, pathPoints, map)
-                    }
-                }
-
-                vm.onLocationUpdate(geoPoint.latitude, geoPoint.longitude)
+                MapHelper.centerMapOnLocation(map, initialPosition, 15.0)
             }
         }
     }
@@ -155,7 +135,7 @@ fun DeliveryPickupScreen(
                     }
                 }
 
-                // ⭐ OBTENER RUTA REAL POR LAS CALLES
+                // OBTENER RUTA REAL POR LAS CALLES
                 currentLocation?.let { current ->
                     val activeStep = steps[uiState.currentStepIndex]
                     if (activeStep.latitude != null && activeStep.longitude != null) {
@@ -173,6 +153,8 @@ fun DeliveryPickupScreen(
 
                             // Ajustar zoom para mostrar toda la ruta
                             MapHelper.fitBoundsToRoute(map, realRoute)
+
+                            vm.onRouteReceived(realRoute)
                         }
                     }
                 }
@@ -180,7 +162,7 @@ fun DeliveryPickupScreen(
         }
     }
 
-    // Escuchar eventos para actualizar ruta
+    // Escuchar eventos para actualizar ruta y manejar el movimiento
     LaunchedEffect(Unit) {
         vm.events.collect { event ->
             when (event) {
@@ -190,6 +172,51 @@ fun DeliveryPickupScreen(
                             val realRoute = RouteService.getRoute(event.from, event.to)
                             routePolyline?.let { MapHelper.removePolyline(map, it) }
                             routePolyline = MapHelper.addRoutePolyline(map, realRoute)
+
+                            // Guardar la ruta en el ViewModel para simulación
+                            vm.onRouteReceived(realRoute)
+                        }
+                    }
+                }
+                is DeliveryEvent.UpdateDriverPosition -> {
+                    // Actualizar posición del marcador del repartidor
+                    mapView?.let { map ->
+                        currentLocation = event.position
+
+                        if (currentLocationMarker == null) {
+                            currentLocationMarker = MapHelper.addMarker(
+                                map, event.position, "Repartidor", ""
+                            )
+                        } else {
+                            MapHelper.updateMarker(currentLocationMarker!!, event.position, map)
+                        }
+
+                        // Agregar punto al path recorrido (polyline azul)
+                        pathPoints.add(event.position)
+                        if (pathPolyline == null) {
+                            pathPolyline = MapHelper.addPolyline(map, pathPoints)
+                        } else {
+                            MapHelper.updatePolyline(pathPolyline!!, pathPoints, map)
+                        }
+                    }
+                }
+                is DeliveryEvent.StepCompleted -> {
+                    // Mover el marcador del repartidor al punto de recogida/entrega completado
+                    mapView?.let { map ->
+                        val completedStep = uiState.tripSteps.getOrNull(event.stepIndex - 1)
+                        if (completedStep != null &&
+                            completedStep.latitude != null &&
+                            completedStep.longitude != null) {
+                            val completedPosition = GeoPoint(
+                                completedStep.latitude,
+                                completedStep.longitude
+                            )
+
+                            currentLocationMarker?.let { marker ->
+                                MapHelper.updateMarker(marker, completedPosition, map)
+                            }
+
+                            currentLocation = completedPosition
                         }
                     }
                 }
@@ -340,14 +367,23 @@ fun DeliveryPickupScreen(
                             .weight(1f)
                             .fillMaxWidth()
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        ) {
                             Icon(
                                 Icons.Default.LocationOn,
                                 contentDescription = null,
-                                tint = colors.onSurface
+                                tint = colors.primary,
+                                modifier = Modifier.size(20.dp)
                             )
                             Spacer(Modifier.width(8.dp))
-                            Text("Pasos del viaje", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "Pasos del viaje",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.onSurface
+                            )
                         }
 
                         Spacer(Modifier.height(12.dp))
@@ -359,18 +395,23 @@ fun DeliveryPickupScreen(
                             note = uiState.order?.customerNote ?: ""
                         )
 
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(16.dp))
 
                         // Pasos
-                        Column(Modifier.fillMaxWidth()) {
+                        Column(
+                            Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
                             uiState.tripSteps.forEachIndexed { index, step ->
-                                StepContainer {
+                                StepContainer (
+                                    isCompleted = step.isCompleted,
+                                    isActive = step.isActive
+                                ){
                                     TripStepRow(
                                         step = step,
                                         showConnector = index < uiState.tripSteps.lastIndex
                                     )
                                 }
-                                if (index < uiState.tripSteps.lastIndex) Spacer(Modifier.height(8.dp))
                             }
                         }
                     }
@@ -459,7 +500,7 @@ fun DeliveryPickupScreen(
     }
 }
 
-// ⭐ Componentes auxiliares (sin cambios)
+// Componentes auxiliares (sin cambios)
 @Composable
 fun TripStepRow(step: TripStep, showConnector: Boolean) {
     val colors = MaterialTheme.colorScheme
@@ -470,52 +511,88 @@ fun TripStepRow(step: TripStep, showConnector: Boolean) {
         ) {
             Box(
                 modifier = Modifier
-                    .size(28.dp)
+                    .size(32.dp)
                     .clip(CircleShape)
+                    .background(
+                        when {
+                            step.isCompleted -> colors.tertiary
+                            step.isActive -> colors.primary
+                            else -> colors.surface
+                        }
+                    )
                     .border(
                         width = 2.dp,
-                        color = if (step.isActive) colors.primary else colors.outline,
+                        color = when {
+                            step.isCompleted -> colors.tertiary
+                            step.isActive -> colors.primary
+                            else -> colors.outline
+                        },
                         shape = CircleShape
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    step.stepNumber.toString(),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (step.isActive) colors.primary else colors.onSurfaceVariant
-                )
+                if (step.isCompleted) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Completado",
+                        tint = colors.onTertiary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                } else {
+                    Text(
+                        step.stepNumber.toString(),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = when {
+                            step.isActive -> colors.onPrimary
+                            else -> colors.onSurfaceVariant
+                        }
+                    )
+                }
             }
 
             if (showConnector) {
                 Spacer(Modifier.height(6.dp))
-                Box(modifier = Modifier.width(2.dp).height(40.dp)) {
+                Box(modifier = Modifier.width(2.dp).height(44.dp)) {
                     Box(
                         modifier = Modifier.fillMaxSize()
-                            .background(colors.outline.copy(alpha = 0.8f))
+                            .background(
+                                if (step.isCompleted) colors.tertiary
+                                else colors.outline.copy(alpha = 0.8f)
+                            )
                     )
                 }
             }
         }
-        Spacer(Modifier.width(8.dp))
-        Column(modifier = Modifier.padding(top = 2.dp)) {
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.padding(top = 4.dp)) {
             Text(
                 text = step.title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Medium
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = if (step.isActive) FontWeight.Bold else FontWeight.Medium,
+                color = if (step.isActive) colors.primary else colors.onSurface
             )
             Spacer(Modifier.height(4.dp))
             Text(
                 text = step.address,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = colors.onSurfaceVariant
             )
             Spacer(Modifier.height(2.dp))
-            Text(
-                text = step.timeWindow,
-                style = MaterialTheme.typography.labelMedium,
-                color = colors.onSurfaceVariant
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Schedule,
+                    contentDescription = null,
+                    tint = colors.onSurfaceVariant,
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = step.timeWindow,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant
+                )
+            }
         }
     }
 }
@@ -585,13 +662,31 @@ private fun createMapView(context: Context, isDarkTheme: Boolean): MapView {
 }
 
 @Composable
-fun StepContainer(content: @Composable () -> Unit) {
+fun StepContainer(
+    isCompleted: Boolean = false,
+    isActive: Boolean = false,
+    content: @Composable () -> Unit
+) {
     val colors = MaterialTheme.colorScheme
+
+    val containerColor = when {
+        isCompleted -> colors.tertiaryContainer // Verde suave para completado
+        isActive -> colors.primaryContainer // Color primario para activo
+        else -> colors.surface // Normal
+    }
+
+    val borderColor = when {
+        isCompleted -> colors.tertiary
+        isActive -> colors.primary
+        else -> colors.outline
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, colors.outline, RoundedCornerShape(12.dp))
-            .padding(12.dp)
+            .background(containerColor, RoundedCornerShape(12.dp))
+            .border(2.dp, borderColor, RoundedCornerShape(12.dp))
+            .padding(16.dp)
     ) {
         content()
     }

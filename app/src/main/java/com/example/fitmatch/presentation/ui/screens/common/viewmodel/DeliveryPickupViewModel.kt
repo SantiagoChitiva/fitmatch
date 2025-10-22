@@ -13,6 +13,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
 import org.osmdroid.util.GeoPoint
+import com.example.fitmatch.presentation.utils.RouteSimulator
+import kotlinx.coroutines.Job
 
 class DeliveryPickupViewModel(
     private val savedStateHandle: SavedStateHandle
@@ -23,6 +25,8 @@ class DeliveryPickupViewModel(
 
     private val _events = Channel<DeliveryEvent>()
     val events = _events.receiveAsFlow()
+    private var simulationJob: Job? = null
+    private var currentRoutePoints: List<GeoPoint> = emptyList()
 
     init {
         val orderId = savedStateHandle.get<String>("orderId") ?: "MIX-24816"
@@ -36,6 +40,9 @@ class DeliveryPickupViewModel(
 
             _uiState.update { it.copy(isMarkingComplete = true, errorMessage = null) }
             delay(1000)
+
+            // Detener simulación actual
+            simulationJob?.cancel()
 
             _uiState.update { currentState ->
                 val updatedSteps = currentState.tripSteps.mapIndexed { index, step ->
@@ -65,8 +72,14 @@ class DeliveryPickupViewModel(
                 )
             }
 
+            // Emitir evento para mover el marcador
+            _events.send(DeliveryEvent.StepCompleted(_uiState.value.currentStepIndex))
+
             if (_uiState.value.currentStepIndex >= _uiState.value.tripSteps.size) {
                 _events.send(DeliveryEvent.OrderCompleted)
+            } else {
+                // Iniciar nueva simulación hacia el siguiente destino
+                startMovementSimulation()
             }
 
             delay(2000)
@@ -113,20 +126,7 @@ class DeliveryPickupViewModel(
     }
 
     fun onLocationUpdate(lat: Double, lng: Double) {
-        // TODO: Enviar ubicación al backend para tracking
         calculateETA(lat, lng)
-        viewModelScope.launch {
-            val currentLoc = GeoPoint(lat, lng)
-            val destination = _uiState.value.currentStep
-            if (destination?.latitude != null && destination.longitude != null) {
-                _events.send(
-                    DeliveryEvent.UpdateRoute(
-                        currentLoc,
-                        GeoPoint(destination.latitude, destination.longitude)
-                    )
-                )
-            }
-        }
     }
 
     fun onDismissMessage() {
@@ -224,6 +224,37 @@ class DeliveryPickupViewModel(
             it.copy(estimatedTime = "$estimatedMinutes min")
         }
     }
+    fun startMovementSimulation() {
+        if (currentRoutePoints.isEmpty()) return
+
+        simulationJob?.cancel()
+        simulationJob = viewModelScope.launch {
+            try {
+                RouteSimulator.simulateMovement(
+                    route = currentRoutePoints,
+                    speedKmh = 30.0, // 30 km/h velocidad urbana
+                    updateIntervalMs = 2000L // Actualizar cada 2 segundos
+                ) { currentPosition, remainingKm ->
+                    // Actualizar posición del repartidor
+                    _events.trySend(DeliveryEvent.UpdateDriverPosition(currentPosition))
+
+                    // Actualizar ETA basado en distancia restante
+                    val etaMinutes = ((remainingKm / 30.0) * 60).toInt().coerceAtLeast(1)
+                    _uiState.update { it.copy(estimatedTime = "$etaMinutes min") }
+                }
+            } catch (e: Exception) {
+                // Simulación cancelada o error
+            }
+        }
+    }
+
+    /**
+     * Guarda la ruta y inicia la simulación cuando se recibe
+     */
+    fun onRouteReceived(route: List<GeoPoint>) {
+        currentRoutePoints = route
+        startMovementSimulation()
+    }
 }
 
 sealed class DeliveryEvent {
@@ -231,6 +262,8 @@ sealed class DeliveryEvent {
     data class OpenChat(val chatId: String) : DeliveryEvent()
 
     data class UpdateRoute(val from: GeoPoint, val to: GeoPoint) : DeliveryEvent()
+    data class UpdateDriverPosition(val position: GeoPoint) : DeliveryEvent()
+    data class StepCompleted(val stepIndex: Int) : DeliveryEvent()
     data class NavigateToLocation(
         val lat: Double,
         val lng: Double,
