@@ -28,6 +28,7 @@ import com.example.fitmatch.presentation.ui.screens.common.viewmodel.DeliveryPic
 import com.example.fitmatch.presentation.utils.LocationHandler
 import com.example.fitmatch.presentation.utils.MapHelper
 import com.example.fitmatch.presentation.utils.MapStyleHelper
+import com.example.fitmatch.presentation.utils.RouteService
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import kotlinx.coroutines.launch
@@ -77,7 +78,6 @@ fun DeliveryPickupScreen(
     // Inicializar ubicación cuando se otorguen permisos
     LaunchedEffect(locationPermissions.allPermissionsGranted) {
         if (locationPermissions.allPermissionsGranted) {
-            // Obtener ubicación inicial
             locationHandler.getCurrentLocation { geoPoint ->
                 currentLocation = geoPoint
                 mapView?.let { map ->
@@ -90,12 +90,10 @@ fun DeliveryPickupScreen(
                 }
             }
 
-            // Iniciar actualizaciones continuas
             locationHandler.startLocationUpdates { geoPoint ->
                 currentLocation = geoPoint
 
                 mapView?.let { map ->
-                    // Actualizar marcador de ubicación actual
                     if (currentLocationMarker == null) {
                         currentLocationMarker = MapHelper.addMarker(
                             map, geoPoint, "Mi ubicación", "Repartidor"
@@ -104,7 +102,6 @@ fun DeliveryPickupScreen(
                         MapHelper.updateMarker(currentLocationMarker!!, geoPoint, map)
                     }
 
-                    // Agregar punto al recorrido
                     pathPoints.add(geoPoint)
                     if (pathPolyline == null) {
                         pathPolyline = MapHelper.addPolyline(map, pathPoints)
@@ -113,7 +110,6 @@ fun DeliveryPickupScreen(
                     }
                 }
 
-                // Notificar al ViewModel
                 vm.onLocationUpdate(geoPoint.latitude, geoPoint.longitude)
             }
         }
@@ -139,7 +135,6 @@ fun DeliveryPickupScreen(
         mapView?.let { map ->
             val steps = uiState.tripSteps
             if (steps.isNotEmpty() && steps.size >= 2) {
-                // Marcador de recogida (paso 0)
                 val pickupStep = steps[0]
                 if (pickupStep.latitude != null && pickupStep.longitude != null) {
                     val pickupPoint = GeoPoint(pickupStep.latitude, pickupStep.longitude)
@@ -150,7 +145,6 @@ fun DeliveryPickupScreen(
                     }
                 }
 
-                // Marcador de entrega (paso 1)
                 val deliveryStep = steps[1]
                 if (deliveryStep.latitude != null && deliveryStep.longitude != null) {
                     val deliveryPoint = GeoPoint(deliveryStep.latitude, deliveryStep.longitude)
@@ -161,23 +155,45 @@ fun DeliveryPickupScreen(
                     }
                 }
 
-                // Crear ruta desde ubicación actual al destino activo
+                // ⭐ OBTENER RUTA REAL POR LAS CALLES
                 currentLocation?.let { current ->
                     val activeStep = steps[uiState.currentStepIndex]
                     if (activeStep.latitude != null && activeStep.longitude != null) {
                         val destination = GeoPoint(activeStep.latitude, activeStep.longitude)
-                        val routePoints = listOf(current, destination)
 
-                        if (routePolyline == null) {
-                            routePolyline = MapHelper.addRoutePolyline(map, routePoints)
-                        } else {
-                            MapHelper.updatePolyline(routePolyline!!, routePoints, map)
+                        scope.launch {
+                            // Obtener ruta real usando OSRM
+                            val realRoute = RouteService.getRoute(current, destination)
+
+                            // Eliminar polyline anterior si existe
+                            routePolyline?.let { MapHelper.removePolyline(map, it) }
+
+                            // Agregar nueva ruta
+                            routePolyline = MapHelper.addRoutePolyline(map, realRoute)
+
+                            // Ajustar zoom para mostrar toda la ruta
+                            MapHelper.fitBoundsToRoute(map, realRoute)
                         }
-
-                        // Ajustar zoom para mostrar toda la ruta
-                        MapHelper.fitBoundsToRoute(map, routePoints)
                     }
                 }
+            }
+        }
+    }
+
+    // Escuchar eventos para actualizar ruta
+    LaunchedEffect(Unit) {
+        vm.events.collect { event ->
+            when (event) {
+                is DeliveryEvent.UpdateRoute -> {
+                    mapView?.let { map ->
+                        scope.launch {
+                            val realRoute = RouteService.getRoute(event.from, event.to)
+                            routePolyline?.let { MapHelper.removePolyline(map, it) }
+                            routePolyline = MapHelper.addRoutePolyline(map, realRoute)
+                        }
+                    }
+                }
+                else -> {}
             }
         }
     }
@@ -231,7 +247,12 @@ fun DeliveryPickupScreen(
             }
         }
     ) { inner ->
-        Column(modifier = Modifier.fillMaxSize().padding(inner)) {
+        // ⭐ LAYOUT CORREGIDO: Column con pesos balanceados
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(inner)
+        ) {
             // Header de estado
             HeaderCard(
                 eta = uiState.estimatedTime,
@@ -239,11 +260,11 @@ fun DeliveryPickupScreen(
                 title = if (uiState.isPickupStep) "En camino a recogida" else "En camino a entrega"
             )
 
-            // MAPA REAL CON OSMDROID
+            // ⭐ MAPA: ocupa 50% de la pantalla
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
+                    .weight(0.5f) // 50% del espacio disponible
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 shape = RoundedCornerShape(16.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
@@ -251,8 +272,7 @@ fun DeliveryPickupScreen(
                 Box(modifier = Modifier.fillMaxSize()) {
                     AndroidView(
                         factory = { ctx ->
-                            createMapView(ctx, isDarkTheme)
-                                .also { mapView = it }
+                            createMapView(ctx, isDarkTheme).also { mapView = it }
                         },
                         modifier = Modifier.fillMaxSize()
                     )
@@ -286,27 +306,40 @@ fun DeliveryPickupScreen(
                         }
                     }
                 }
+            }
 
-                // Detalles del pedido
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = colors.surface),
-                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                    border = BorderStroke(1.dp, colors.outline.copy(alpha = 0.12f))
+            // ⭐ DETALLES: ocupa 50% de la pantalla con scroll
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(0.5f), // 50% del espacio disponible
+                colors = CardDefaults.cardColors(containerColor = colors.surface),
+                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                border = BorderStroke(1.dp, colors.outline.copy(alpha = 0.12f))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(20.dp)
                 ) {
-                    Column(modifier = Modifier.padding(20.dp)) {
-                        Box(
-                            modifier = Modifier
-                                .width(40.dp)
-                                .height(4.dp)
-                                .background(
-                                    colors.onSurfaceVariant.copy(alpha = 0.35f),
-                                    RoundedCornerShape(2.dp)
-                                )
-                                .align(Alignment.CenterHorizontally)
-                        )
-                        Spacer(Modifier.height(16.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(40.dp)
+                            .height(4.dp)
+                            .background(
+                                colors.onSurfaceVariant.copy(alpha = 0.35f),
+                                RoundedCornerShape(2.dp)
+                            )
+                            .align(Alignment.CenterHorizontally)
+                    )
+                    Spacer(Modifier.height(16.dp))
 
+                    // Pasos del viaje (scrolleable)
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 Icons.Default.LocationOn,
@@ -328,7 +361,7 @@ fun DeliveryPickupScreen(
 
                         Spacer(Modifier.height(12.dp))
 
-                        // Pasos del viaje
+                        // Pasos
                         Column(Modifier.fillMaxWidth()) {
                             uiState.tripSteps.forEachIndexed { index, step ->
                                 StepContainer {
@@ -337,68 +370,68 @@ fun DeliveryPickupScreen(
                                         showConnector = index < uiState.tripSteps.lastIndex
                                     )
                                 }
-                                if (index < uiState.tripSteps.lastIndex) Spacer(Modifier.height(0.dp))
+                                if (index < uiState.tripSteps.lastIndex) Spacer(Modifier.height(8.dp))
                             }
                         }
+                    }
 
-                        Spacer(Modifier.height(20.dp))
+                    Spacer(Modifier.height(12.dp))
 
-                        // Acciones
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    // Acciones (fijas al fondo)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { vm.onNavigate() },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.onSurface),
+                            border = BorderStroke(1.dp, colors.onSurface.copy(alpha = 0.12f)),
+                            shape = RoundedCornerShape(24.dp)
                         ) {
-                            OutlinedButton(
-                                onClick = { vm.onNavigate() },
-                                modifier = Modifier.weight(1f),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.onSurface),
-                                border = BorderStroke(1.dp, colors.onSurface.copy(alpha = 0.12f)),
-                                shape = RoundedCornerShape(24.dp)
-                            ) {
-                                Text("Navegar")
-                            }
-                            OutlinedButton(
-                                onClick = { vm.onCall() },
-                                modifier = Modifier.weight(1f),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.onSurface),
-                                border = BorderStroke(1.dp, colors.onSurface.copy(alpha = 0.12f)),
-                                shape = RoundedCornerShape(24.dp)
-                            ) {
-                                Text("Llamar")
-                            }
-                            OutlinedButton(
-                                onClick = { vm.onChat() },
-                                modifier = Modifier.weight(1f),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.onSurface),
-                                border = BorderStroke(1.dp, colors.onSurface.copy(alpha = 0.12f)),
-                                shape = RoundedCornerShape(24.dp)
-                            ) {
-                                Text("Chatear")
-                            }
+                            Text("Navegar")
                         }
-
-                        Spacer(Modifier.height(12.dp))
-
-                        val ctaLabel = when {
-                            uiState.isPickupStep -> "Marcar como recogido"
-                            uiState.isDeliveryStep -> "Marcar como entregado"
-                            else -> "Continuar"
-                        }
-
-                        Button(
-                            onClick = { vm.onMarkStepComplete() },
-                            enabled = uiState.canMarkComplete && !uiState.isMarkingComplete,
-                            modifier = Modifier.fillMaxWidth().height(52.dp),
-                            shape = RoundedCornerShape(16.dp)
+                        OutlinedButton(
+                            onClick = { vm.onCall() },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.onSurface),
+                            border = BorderStroke(1.dp, colors.onSurface.copy(alpha = 0.12f)),
+                            shape = RoundedCornerShape(24.dp)
                         ) {
-                            if (uiState.isMarkingComplete) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-                                Text(ctaLabel, fontWeight = FontWeight.SemiBold)
-                            }
+                            Text("Llamar")
+                        }
+                        OutlinedButton(
+                            onClick = { vm.onChat() },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.onSurface),
+                            border = BorderStroke(1.dp, colors.onSurface.copy(alpha = 0.12f)),
+                            shape = RoundedCornerShape(24.dp)
+                        ) {
+                            Text("Chatear")
+                        }
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    val ctaLabel = when {
+                        uiState.isPickupStep -> "Marcar como recogido"
+                        uiState.isDeliveryStep -> "Marcar como entregado"
+                        else -> "Continuar"
+                    }
+
+                    Button(
+                        onClick = { vm.onMarkStepComplete() },
+                        enabled = uiState.canMarkComplete && !uiState.isMarkingComplete,
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        if (uiState.isMarkingComplete) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text(ctaLabel, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -424,9 +457,9 @@ fun DeliveryPickupScreen(
             )
         }
     }
-
 }
 
+// ⭐ Componentes auxiliares (sin cambios)
 @Composable
 fun TripStepRow(step: TripStep, showConnector: Boolean) {
     val colors = MaterialTheme.colorScheme
@@ -486,6 +519,7 @@ fun TripStepRow(step: TripStep, showConnector: Boolean) {
         }
     }
 }
+
 @Composable
 fun HeaderCard(eta: String, orderNumber: String, title: String) {
     val colors = MaterialTheme.colorScheme
@@ -532,7 +566,7 @@ fun HeaderCard(eta: String, orderNumber: String, title: String) {
     }
 }
 
-private fun BoxScope.createMapView(context: Context, isDarkTheme: Boolean): MapView {
+private fun createMapView(context: Context, isDarkTheme: Boolean): MapView {
     return MapView(context).apply {
         setMultiTouchControls(true)
 
@@ -562,6 +596,7 @@ fun StepContainer(content: @Composable () -> Unit) {
         content()
     }
 }
+
 @Composable
 fun CustomerNoteCard(initials: String, nameWithAge: String, note: String) {
     val colors = MaterialTheme.colorScheme
@@ -600,4 +635,3 @@ fun CustomerNoteCard(initials: String, nameWithAge: String, note: String) {
         }
     }
 }
-

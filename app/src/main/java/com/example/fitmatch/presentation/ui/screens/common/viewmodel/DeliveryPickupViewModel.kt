@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
+import org.osmdroid.util.GeoPoint
 
 class DeliveryPickupViewModel(
     private val savedStateHandle: SavedStateHandle
@@ -114,6 +115,18 @@ class DeliveryPickupViewModel(
     fun onLocationUpdate(lat: Double, lng: Double) {
         // TODO: Enviar ubicación al backend para tracking
         calculateETA(lat, lng)
+        viewModelScope.launch {
+            val currentLoc = GeoPoint(lat, lng)
+            val destination = _uiState.value.currentStep
+            if (destination?.latitude != null && destination.longitude != null) {
+                _events.send(
+                    DeliveryEvent.UpdateRoute(
+                        currentLoc,
+                        GeoPoint(destination.latitude, destination.longitude)
+                    )
+                )
+            }
+        }
     }
 
     fun onDismissMessage() {
@@ -216,6 +229,8 @@ class DeliveryPickupViewModel(
 sealed class DeliveryEvent {
     data class MakeCall(val phoneNumber: String) : DeliveryEvent()
     data class OpenChat(val chatId: String) : DeliveryEvent()
+
+    data class UpdateRoute(val from: GeoPoint, val to: GeoPoint) : DeliveryEvent()
     data class NavigateToLocation(
         val lat: Double,
         val lng: Double,

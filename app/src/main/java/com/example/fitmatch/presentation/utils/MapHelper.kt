@@ -79,6 +79,11 @@ object MapHelper {
         mapView.invalidate()
     }
 
+    fun removePolyline(mapView: MapView, polyline: Polyline) {
+        mapView.overlays.remove(polyline)
+        mapView.invalidate()
+    }
+
     /**
      * Elimina todos los marcadores del mapa
      */
