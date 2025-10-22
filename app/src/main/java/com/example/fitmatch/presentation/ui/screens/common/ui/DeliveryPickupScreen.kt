@@ -81,13 +81,13 @@ fun DeliveryPickupScreen(
     LaunchedEffect(locationPermissions.allPermissionsGranted) {
         if (locationPermissions.allPermissionsGranted) {
             // Ubicación inicial del repartidor (inicio de la ruta)
-            val initialPosition = GeoPoint(4.6097, -74.0817) // Centro Mayor
+            val initialPosition = GeoPoint(4.60667, -74.08591) // Plaza España
             currentLocation = initialPosition
 
             mapView?.let { map ->
                 if (currentLocationMarker == null) {
                     currentLocationMarker = MapHelper.addMarker(
-                        map, initialPosition, "Repartidor", "" // ✅ Solo "Repartidor"
+                        map, initialPosition, "Repartidor", "" //
                     )
                 }
                 MapHelper.centerMapOnLocation(map, initialPosition, 15.0)
@@ -274,7 +274,7 @@ fun DeliveryPickupScreen(
             }
         }
     ) { inner ->
-        // ⭐ LAYOUT CORREGIDO: Column con pesos balanceados
+        // LAYOUT CORREGIDO: Column con pesos balanceados
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -287,7 +287,7 @@ fun DeliveryPickupScreen(
                 title = if (uiState.isPickupStep) "En camino a recogida" else "En camino a entrega"
             )
 
-            // ⭐ MAPA: ocupa 50% de la pantalla
+            //MAPA: ocupa 50% de la pantalla
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -335,7 +335,7 @@ fun DeliveryPickupScreen(
                 }
             }
 
-            // ⭐ DETALLES: ocupa 50% de la pantalla con scroll
+            //DETALLES: ocupa 50% de la pantalla con scroll
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
