@@ -1,0 +1,50 @@
+# Build directories
+.gradle/
+build/
+**/build/
+**/out/
+
+# Local configuration (SDK path)
+local.properties
+
+# Android Studio / IntelliJ files
+*.iml
+.idea/
+.idea/caches/
+.idea/libraries/
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+.vscode/
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Logging and outputs
+*.log
+captures/
+.navigation/
+
+# Native build artifacts
+.externalNativeBuild/
+.cxx/
+
+# APKs and build outputs
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+output-metadata.json
+*.so
+
+# Keystore files (don't commit)
+*.jks
+*.keystore
+
+# Firebase / Google services (include only if safe)
+# google-services.json
+
+# Other IDE artifacts
+proguard-rules.pro
